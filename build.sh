@@ -4,7 +4,7 @@
 set -euo pipefail
 
 : "${FORGE_SRC_URL:?Falta FORGE_SRC_URL}"
-: "${MCP_URL:?Falta la variable MCP_URL (zip de MCP para 1.1). Ver GITHUB.md}"
+: "${MCP_URL:?Falta la variable MCP_URL}"
 
 ROOT="$PWD"
 WORK="$ROOT/work"
@@ -12,34 +12,40 @@ rm -rf "$WORK" "$ROOT/dist"
 mkdir -p "$WORK" "$ROOT/dist"
 cd "$WORK"
 
-echo "== Descargando Forge (src) =="
-curl -fsSL "$FORGE_SRC_URL" -o forge.zip
-unzip -q forge.zip            # debe crear la carpeta forge/
-test -d forge || { echo "El zip de Forge no creo la carpeta forge/"; exit 1; }
-
 echo "== Descargando MCP =="
 curl -fsSL "$MCP_URL" -o mcp.zip
-mkdir -p forge/mcp
-unzip -q mcp.zip -d forge/mcp
+mkdir -p mcp
+unzip -q mcp.zip -d mcp
 # algunos zips traen una carpeta intermedia
-if [ ! -d forge/mcp/jars ] && [ "$(ls forge/mcp | wc -l)" = "1" ]; then
-  inner="forge/mcp/$(ls forge/mcp)"
-  mv "$inner"/* forge/mcp/ && rmdir "$inner"
+if [ ! -f mcp/decompile.sh ] && [ "$(ls mcp | wc -l)" = "1" ]; then
+  inner="mcp/$(ls mcp)"
+  mv "$inner"/* mcp/
+  rmdir "$inner"
 fi
+test -f mcp/decompile.sh || { echo "MCP no trae decompile.sh. Contenido:"; ls mcp; exit 1; }
 
-echo "== Descargando jars oficiales de Minecraft 1.1 desde Mojang =="
+echo "== Descargando Forge (src) dentro de MCP =="
+curl -fsSL "$FORGE_SRC_URL" -o forge.zip
+unzip -q forge.zip -d mcp          # crea mcp/forge/
+test -f mcp/forge/install.sh || { echo "Forge no trae forge/install.sh. Contenido:"; ls mcp; exit 1; }
+
+echo "== Descargando jars oficiales de Minecraft 1.1 =="
 MANIFEST=$(curl -fsSL https://piston-meta.mojang.com/mc/game/version_manifest_v2.json)
 VURL=$(echo "$MANIFEST" | jq -r '.versions[] | select(.id=="1.1") | .url')
 test -n "$VURL" || { echo "No encontre la version 1.1 en el manifest de Mojang"; exit 1; }
 VJSON=$(curl -fsSL "$VURL")
-mkdir -p forge/mcp/jars/bin
-curl -fsSL "$(echo "$VJSON" | jq -r '.downloads.client.url')" -o forge/mcp/jars/bin/minecraft.jar
+mkdir -p mcp/jars/bin
+curl -fsSL "$(echo "$VJSON" | jq -r '.downloads.client.url')" -o mcp/jars/bin/minecraft.jar
+
 SERVER_URL=$(echo "$VJSON" | jq -r '.downloads.server.url // empty')
-if [ -n "$SERVER_URL" ]; then
-  curl -fsSL "$SERVER_URL" -o forge/mcp/jars/minecraft_server.jar
-else
-  echo "AVISO: Mojang no publica minecraft_server.jar para 1.1; MCP puede pedirlo."
+if [ -z "$SERVER_URL" ]; then
+  SERVER_URL="https://s3.amazonaws.com/Minecraft.Download/versions/1.1/minecraft_server.1.1.jar"
 fi
+if ! curl -fsSL "$SERVER_URL" -o mcp/jars/minecraft_server.jar; then
+  rm -f mcp/jars/minecraft_server.jar
+  echo "AVISO: no pude bajar minecraft_server.jar; MCP puede fallar al decompilar."
+fi
+
 # librerias (lwjgl, jinput...) con los nombres que espera MCP
 echo "$VJSON" | jq -r '.libraries[].downloads.artifact.url // empty' | while read -r u; do
   f="$(basename "$u")"
@@ -51,16 +57,21 @@ echo "$VJSON" | jq -r '.libraries[].downloads.artifact.url // empty' | while rea
     jinput*)                 out="jinput.jar" ;;
     *)                       out="$f" ;;
   esac
-  curl -fsSL "$u" -o "forge/mcp/jars/bin/$out"
+  curl -fsSL "$u" -o "mcp/jars/bin/$out"
 done
 
 echo "== Instalando Forge sobre MCP (decompila, puede tardar) =="
-cd forge
-dos2unix -q install.sh 2>/dev/null || true
-bash install.sh
-cd ..
+cd mcp
+chmod +x ./*.sh forge/*.sh 2>/dev/null || true
+dos2unix -q ./*.sh forge/*.sh 2>/dev/null || true
+# Si install.sh sube una carpeta (cd ..), se ejecuta desde forge/; si no, desde la raiz de MCP
+if grep -qE '^[[:space:]]*(cd|pushd)[[:space:]]+\.\.' forge/install.sh; then
+  (cd forge && bash install.sh)
+else
+  bash forge/install.sh
+fi
 
-SRC="forge/mcp/src/minecraft/net/minecraft/src"
+SRC="$WORK/mcp/src/minecraft/net/minecraft/src"
 test -d "$SRC" || { echo "No existe $SRC; la instalacion de Forge fallo"; exit 1; }
 
 echo "== Copiando el mod y parcheando ImageBufferDownload =="
@@ -68,16 +79,13 @@ cp "$ROOT"/*.java "$SRC"/
 python3 "$ROOT/patch_parser.py" "$SRC/ImageBufferDownload.java"
 
 echo "== Recompilando y reofuscando =="
-cd forge/mcp
 bash recompile.sh
 bash reobfuscate.sh
-cd "$WORK"
 
 echo "== Empaquetando clases =="
-OUT="forge/mcp/reobf/minecraft"
+OUT="$WORK/mcp/reobf/minecraft"
 test -d "$OUT" || { echo "No hay salida en $OUT"; exit 1; }
 cd "$OUT"
-# nombres reofuscados de ImageBufferDownload/RenderPlayer/etc. cambian: se entrega todo lo que cambio
 zip -qr "$ROOT/dist/slimskins-classes.zip" .
 cp "$ROOT/README.md" "$ROOT/dist/README.md"
 echo "Listo: dist/slimskins-classes.zip"
