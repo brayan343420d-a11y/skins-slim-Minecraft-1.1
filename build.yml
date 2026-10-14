@@ -1,0 +1,44 @@
+name: Build SlimSkins (MC 1.1)
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Instalar herramientas (MCP/Forge de 1.1 usan Python 2)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq unzip python2 dos2unix
+          sudo ln -sf /usr/bin/python2 /usr/local/bin/python
+
+      - name: Compilar
+        env:
+          # Se pueden cambiar en Settings > Secrets and variables > Actions > Variables
+          FORGE_SRC_URL: ${{ vars.FORGE_SRC_URL || 'https://osdn.net/projects/sfnet_minecraftforge/downloads/1.1.0/minecraftforge-src-1.1.0.zip/download' }}
+          MCP_URL: ${{ vars.MCP_URL }}
+        run: bash build.sh
+
+      - name: Subir resultado
+        uses: actions/upload-artifact@v4
+        with:
+          name: slimskins-mc1.1
+          path: dist/
+          if-no-files-found: error
+
+      - name: Subir logs (si algo fallo)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: work/forge/mcp/logs/
+          if-no-files-found: ignore
