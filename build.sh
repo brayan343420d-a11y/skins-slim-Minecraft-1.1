@@ -96,14 +96,25 @@ echo "== Copiando el mod y parcheando ImageBufferDownload =="
 cp "$ROOT"/*.java "$SRC"/
 python3 "$ROOT/patch_parser.py" "$SRC/ImageBufferDownload.java"
 
-echo "== Recompilando y reofuscando =="
-bash recompile.sh
+echo "== Parches de Forge que no encajaron (.rej) =="
+find "$WORK/mcp/src" -name '*.rej' 2>/dev/null | sed "s#$WORK/mcp/src/minecraft/net/minecraft/##" | head -30 || true
+
+echo "== Recompilando =="
+if ! bash recompile.sh > "$WORK/recompile.log" 2>&1; then
+  echo "== ERRORES DE COMPILACION (resumen) =="
+  echo "-- total de errores:"
+  grep -cE '\.java:[0-9]+: error' "$WORK/recompile.log" || true
+  echo "-- errores por archivo:"
+  grep -E '\.java:[0-9]+: error' "$WORK/recompile.log" | sed -E 's/:[0-9]+: error.*//; s#^src/minecraft/net/minecraft/##' | sort | uniq -c | sort -rn | head -25 || true
+  echo "-- primeros 25 errores:"
+  grep -E -A2 '\.java:[0-9]+: error' "$WORK/recompile.log" | sed 's#src/minecraft/net/minecraft/##' | head -80 || true
+  exit 1
+fi
+echo "== Reofuscando =="
 bash reobfuscate.sh
 
 echo "== Empaquetando clases =="
 OUT="$WORK/mcp/reobf/minecraft"
 test -d "$OUT" || { echo "No hay salida en $OUT"; exit 1; }
 cd "$OUT"
-zip -qr "$ROOT/dist/slimskins-classes.zip" .
-cp "$ROOT/README.md" "$ROOT/dist/README.md"
-echo "Listo: dist/slimskins-classes.zip"
+zip -qr "$ROOT/dist/slimsk
