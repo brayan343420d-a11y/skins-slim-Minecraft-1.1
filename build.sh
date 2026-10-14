@@ -10,6 +10,17 @@ ROOT="$PWD"
 WORK="$ROOT/work"
 rm -rf "$WORK" "$ROOT/dist"
 mkdir -p "$WORK" "$ROOT/dist"
+
+echo "== Instalando wine (MCP 5.6 usa jad.exe en Linux) =="
+sudo dpkg --add-architecture i386
+sudo apt-get update -qq
+sudo apt-get install -y -qq wine wine32:i386 wine64 xvfb
+export WINEDEBUG=-all
+export WINEDLLOVERRIDES="mscoree,mshtml="
+export WINEPREFIX="$HOME/.wine"
+xvfb-run -a wineboot -u >/dev/null 2>&1 || true
+wine --version || true
+
 cd "$WORK"
 
 echo "== Descargando MCP =="
@@ -66,13 +77,20 @@ chmod +x ./*.sh forge/*.sh 2>/dev/null || true
 dos2unix -q ./*.sh forge/*.sh 2>/dev/null || true
 # Si install.sh sube una carpeta (cd ..), se ejecuta desde forge/; si no, desde la raiz de MCP
 if grep -qE '^[[:space:]]*(cd|pushd)[[:space:]]+\.\.' forge/install.sh; then
-  (cd forge && bash install.sh)
+  (cd forge && bash install.sh < /dev/null) || true
 else
-  bash forge/install.sh
+  bash forge/install.sh < /dev/null || true
 fi
 
 SRC="$WORK/mcp/src/minecraft/net/minecraft/src"
-test -d "$SRC" || { echo "No existe $SRC; la instalacion de Forge fallo"; exit 1; }
+if [ ! -d "$SRC" ]; then
+  echo "== DIAGNOSTICO: no se creo src =="
+  ls -la jars jars/bin 2>&1 | head -30 || true
+  ls logs 2>&1 || true
+  for f in logs/*.log; do echo "--- $f"; tail -n 40 "$f"; done 2>/dev/null || true
+  echo "La instalacion de Forge fallo"
+  exit 1
+fi
 
 echo "== Copiando el mod y parcheando ImageBufferDownload =="
 cp "$ROOT"/*.java "$SRC"/
